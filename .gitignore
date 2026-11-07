@@ -1,0 +1,45 @@
+# Virtual environment
+.venv/
+
+# Data
+data/raw/
+data/interim/
+data/processed/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+
+# Temporary files
+*.log
+.DS_Store
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Additional caches
+.pytest_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+
+# Windows
+Thumbs.db
+
+# Large model files (if present)
+*.pkl
+*.joblib
+
+# Datasets
+train_for_model/
+train_recent_007.csv.gz
+test_007.csv.gz

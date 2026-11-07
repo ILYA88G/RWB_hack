@@ -1,0 +1,7 @@
+{
+  "weights": {
+    "lgbm": 0.75,
+    "reconciled": 0.25
+  },
+  "scale": 0.98
+}
