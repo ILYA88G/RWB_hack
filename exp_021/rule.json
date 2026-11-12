@@ -1,0 +1,6 @@
+{
+  "model": "ridge",
+  "mode": "shape",
+  "alpha": 0.15,
+  "cap": 0.02
+}

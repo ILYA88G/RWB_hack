@@ -118,7 +118,7 @@ class LongPatchAllocator(nn.Module):
         )
 
 
-def fit_adapter(model, history, norm):
+def fit_adapter(model, history, norm, forecast_budget=None):
     optimizer = torch.optim.AdamW(
         model.adapter.parameters(),
         lr=0.0005,
@@ -147,9 +147,10 @@ def fit_adapter(model, history, norm):
             }
             y = batch["y"]
 
-            prediction = old.group_prediction(
-                model, batch, y.sum(dim=1)
-            )
+            totals = y.sum(dim=1) if forecast_budget is None else torch.as_tensor(
+                forecast_budget(int(sources[i])), dtype=y.dtype, device=y.device
+            ).reshape(1, 8)
+            prediction = old.group_prediction(model, batch, totals)
             error = (prediction - y).abs().sum()
 
             optimizer.zero_grad(set_to_none=True)
@@ -233,7 +234,7 @@ def _features(v, times, cs, t, scale, flow):
     return np.stack(f, axis=-1).astype(np.float32)
 
 
-def _local(v, cs, t, scale, flow):
+def _local(v, cs, t, scale, flow, upstream=False):
     f = [
         v[t, :, 0] / scale[None, :, 0],
         (v[t, :, 0] - v[t - 3, :, 0]) / scale[None, :, 0],
@@ -252,10 +253,16 @@ def _local(v, cs, t, scale, flow):
         (cs[t + 1, :, 0] - cs[t - 47, :, 0])
         / 48 / scale[None, :, 0]
     )
+    if upstream:
+        for channel in (4, 5, 6):
+            now = v[t, :, channel] / scale[None, :, channel]
+            for lag in (4, 8, 16, 24):
+                past = v[t - lag, :, channel] / scale[None, :, channel]
+                f.extend([past, now - past])
     return np.stack(f, axis=-1).astype(np.float64)
 
 
-def fit_prefix(v, times, flow, origin, days=14):
+def fit_prefix(v, times, flow, origin, days=14, upstream=False):
     origin = int(origin)
     if origin < 700 or len(v) <= origin or len(flow) <= origin:
         raise ValueError("Недостаточно истории для локальной модели")
@@ -319,9 +326,9 @@ def fit_prefix(v, times, flow, origin, days=14):
     )[0]
     target = residual @ basis
 
-    z = _local(v, cs, t, scale, flow)
+    z = _local(v, cs, t, scale, flow, upstream)
     zp = _local(
-        v, cs, np.array([origin]), scale, flow
+        v, cs, np.array([origin]), scale, flow, upstream
     )[0]
 
     mean = z.mean(axis=0)
@@ -400,13 +407,13 @@ def predict_robust(stats, alpha=400., iterations=6):
     return np.maximum(raw, 0)
 
 
-def local_adjustment(values, times, half, totals):
+def local_adjustment(values, times, half, totals, *, upstream=False):
     values = np.asarray(values, dtype=np.float32)
     half = np.asarray(half, dtype=np.float32)
     totals = np.asarray(totals, dtype=np.float64)
 
     stats = fit_prefix(
-        values, times, half, len(values) - 1, days=14
+        values, times, half, len(values) - 1, days=14, upstream=upstream
     )
     raw_local = predict_robust(stats, alpha=400., iterations=6)
     raw_ridge = np.maximum(

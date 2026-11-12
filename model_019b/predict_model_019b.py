@@ -148,7 +148,7 @@ def load_history(path):
     return values, times, routes
 
 
-def make_submission(test, old, prediction, times, routes):
+def make_submission(test, old, prediction, times, routes, *, target_totals=None):
     if test[["id", "route_id", "timestamp"]].isna().any().any():
         raise ValueError("Пропуски в test")
 
@@ -201,6 +201,10 @@ def make_submission(test, old, prediction, times, routes):
         raise ValueError("Некорректные прогнозы в исходном submission")
 
     base_total = np.bincount(step, weights=base, minlength=8)
+    if target_totals is not None:
+        base_total = np.asarray(target_totals, dtype=np.float64)
+        if base_total.shape != (8,) or not np.isfinite(base_total).all():
+            raise ValueError("Expected eight finite horizon totals")
     new_total = prediction.sum(axis=0, dtype=np.float64)
 
     if (base_total <= 0).any() or (new_total <= 0).any():
@@ -579,11 +583,15 @@ def group_prediction(model, batch, totals):
     return q + previous
 
 
-def epoch_pass(model, data, optimizer=None, generator=None):
+def epoch_pass(model, data, optimizer=None, generator=None, forecast_totals=None):
     training = optimizer is not None
     model.train(training)
 
     groups = len(data["x"])
+    if forecast_totals is not None:
+        forecast_totals = torch.as_tensor(forecast_totals, dtype=data["y"].dtype)
+        if forecast_totals.shape != (groups, 8) or not torch.isfinite(forecast_totals).all():
+            raise ValueError("Expected eight finite forecast totals for every group")
     order = (
         torch.randperm(groups, generator=generator)
         if training
@@ -602,9 +610,8 @@ def epoch_pass(model, data, optimizer=None, generator=None):
         y = batch["y"]
 
         with torch.set_grad_enabled(training):
-            prediction = group_prediction(
-                model, batch, y.sum(dim=1)
-            )
+            totals = y.sum(dim=1) if forecast_totals is None else forecast_totals[selected]
+            prediction = group_prediction(model, batch, totals)
             error = (prediction - y).abs().sum()
             loss = error / y.sum()
 
@@ -623,7 +630,8 @@ def epoch_pass(model, data, optimizer=None, generator=None):
 
 
 def train_model(
-    history, cutoff, epochs, validation_sources=None, tag="train"
+    history, cutoff, epochs, validation_sources=None, tag="train", on_epoch=None,
+    validation_totals=None,
 ):
     np.random.seed(CONFIG["seed"])
     torch.manual_seed(CONFIG["seed"])
@@ -687,13 +695,15 @@ def train_model(
         val = (
             None
             if validation is None
-            else epoch_pass(model, validation)
+            else epoch_pass(model, validation, forecast_totals=validation_totals)
         )
 
         record = dict(
             epoch=epoch + 1,
             train_group_wape=loss,
             validation_group_wape=val,
+            validation_budget=(None if validation is None else
+                               "observed" if validation_totals is None else "forecast"),
             seconds=time.monotonic() - before,
             lr=lr,
             source_min=int(sources.min()),
@@ -712,6 +722,8 @@ def train_model(
         )
 
         records.append(record)
+        if on_epoch is not None:
+            on_epoch(model, norm, records)
         print(tag, json.dumps(record), flush=True)
 
         del data
@@ -1174,12 +1186,20 @@ def main():
         raise ValueError(
             "CatBoost требует полный train начиная с 28 июля"
         )
-    if times[-1] < pd.Timestamp("2025-10-30 10:30:00"):
+    cat = CatBoostRegressor()
+    cat.load_model(str(args.cat))
+    metadata = cat.get_metadata()
+    # The archived 019b checkpoint predates the embedded training metadata.
+    cat_cutoff = (metadata["training_cutoff"] if "training_cutoff" in metadata
+                  else "2025-10-30 10:30:00")
+    if times[-1] < pd.Timestamp(cat_cutoff):
         raise ValueError(
             "Дата прогноза раньше границы обучения CatBoost"
         )
 
     np.testing.assert_array_equal(routes, np.arange(1000))
+    if "route_order" in metadata:
+        np.testing.assert_array_equal(routes, json.loads(metadata["route_order"]))
 
     engine = CatFeatures(values, times, routes)
     rp = np.repeat(np.arange(len(routes)), 8)
@@ -1188,9 +1208,6 @@ def main():
     features, scale, offset = engine.features(
         np.full(len(rp), len(times) - 1), rp, hp
     )
-
-    cat = CatBoostRegressor()
-    cat.load_model(str(args.cat))
 
     if cat.feature_names_ != list(features.columns):
         raise ValueError(
@@ -1248,7 +1265,7 @@ def main():
             teacher_totals=totals,
             routes=routes,
             origin=str(times[-1]),
-            cat_training_origin="2025-10-30 10:30:00",
+            cat_training_origin=cat_cutoff,
         )
 
     print(

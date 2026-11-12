@@ -1,0 +1,14 @@
+{
+  "base": "submissions/submission_model_020a.csv",
+  "factor": 1.004,
+  "file": "exp_029\\public_scale\\020a_scale_1.0040000.csv",
+  "sha256": "b8a7f332bb8d802ecd06ea968263676a799f169f80e50f54b0c7fca7e4c648c0",
+  "public_score": 0.3210785427577813,
+  "baseline_public_score": 0.3246728080471545,
+  "improvement": 0.0035942652893731775,
+  "target": 0.3212,
+  "target_reached": true,
+  "public_rank_observed": 1,
+  "selection": "factor chosen using Public Score",
+  "fresh_scaled_public_score": 0.3218038660963992
+}

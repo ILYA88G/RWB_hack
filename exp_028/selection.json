@@ -1,0 +1,14 @@
+{
+  "selected": "020a",
+  "shares": "020a",
+  "development": [
+    "2025-10-11",
+    "2025-10-13"
+  ],
+  "holdout": [
+    "2025-10-18",
+    "2025-10-20"
+  ],
+  "eligible": [],
+  "combinations": []
+}
